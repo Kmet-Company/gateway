@@ -14,7 +14,13 @@
 # Run (gateway only, with mock AI responses):
 #   AI_VISION_URL= docker compose up --build -d
 #
-# Run (full mesh): bring up frontend + ai first, then gateway:
+# Run (full mesh, any order): gateway blocks until ai-vision reports both models
+# loaded (WAIT_FOR_AI_MODELS, on by default when AI_VISION_URL is set).
+#
+# Single compose (nginx waits for gateway healthy): from ../frontend run
+#   docker compose -f docker-compose.yml -f docker-compose.full.yml up --build -d
+#
+# Split stacks (legacy):
 #   (cd ../frontend && docker compose up -d)
 #   (cd ../ai       && docker compose up -d)
 #   docker compose up --build -d
@@ -47,6 +53,17 @@ services:
     # traffic still goes through nginx /gateway/ in the frontend `web`.
     ports:
       - "127.0.0.1:8102:8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)\"",
+        ]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      # Lifespan may block until ai-vision models_ready (up to WAIT_FOR_AI_MODELS_TIMEOUT_SEC).
+      start_period: 900s
     networks: [vireal-net]
 
 networks:
