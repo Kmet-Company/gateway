@@ -1,0 +1,59 @@
+# ViReAl — Gateway service.
+#
+# FastAPI orchestrator that sits between the Angular frontend and the AI
+# vision model. The frontend's nginx (in ../frontend) proxies /gateway/*
+# here at `http://gateway:8000/...`, and this service in turn calls:
+#   - PostgREST at http://api:3000          (from the frontend stack)
+#   - ai-vision at http://ai-vision:8000    (from the ../ai stack)
+#
+# All three talk via the shared `vireal-net` docker network.
+#
+# Prereq (one time per host):
+#   docker network create vireal-net
+#
+# Run (gateway only, with mock AI responses):
+#   AI_VISION_URL= docker compose up --build -d
+#
+# Run (full mesh): bring up frontend + ai first, then gateway:
+#   (cd ../frontend && docker compose up -d)
+#   (cd ../ai       && docker compose up -d)
+#   docker compose up --build -d
+
+services:
+  gateway:
+    image: vireal-gateway:latest
+    container_name: vireal-gateway
+    restart: unless-stopped
+    # host.docker.internal resolves to the host's IP on Linux too, so we can
+    # point AI_VISION_URL at an ai-vision running on the host (outside Docker).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      POSTGREST_URL: http://api:3000
+      # When running against nginx from ../frontend, STATIC_ASSET_BASE=http://web
+      # serves public/*.mp4. For local `ng serve`, set in .env:
+      #   STATIC_ASSET_BASE=http://host.docker.internal:4200
+      STATIC_ASSET_BASE: ${STATIC_ASSET_BASE:-http://web}
+      # Leave empty to run gateway with mock responses (no ../ai stack needed).
+      AI_VISION_URL: ${AI_VISION_URL:-http://ai-vision:8000}
+      AI_FIRE_URL: ${AI_FIRE_URL:-http://ai-vision:8000}
+      # Periodic analysis cadence (seconds). 0 = disabled; trigger manually
+      # via POST /gateway/analyze/{code} from the UI.
+      ANALYSIS_INTERVAL_SEC: ${ANALYSIS_INTERVAL_SEC:-0}
+    expose:
+      - "8000"
+    # Local dev: expose gateway on the host for curling / pointing a local
+    # `ng serve` at a hosted gateway without going through Traefik. Public
+    # traffic still goes through nginx /gateway/ in the frontend `web`.
+    ports:
+      - "127.0.0.1:8102:8000"
+    networks: [vireal-net]
+
+networks:
+  # Shared with ../frontend and ../ai stacks. Created once per host with
+  # `docker network create vireal-net`. Using `external: true` makes compose
+  # fail fast if the network is missing, rather than silently creating a
+  # duplicate that can't talk to the other stacks.
+  vireal-net:
+    external: true
+    name: vireal-net
